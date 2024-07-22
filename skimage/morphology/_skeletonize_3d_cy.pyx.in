@@ -376,13 +376,14 @@ cdef bint is_surfacepoint(pixel_type neighbors[27]) noexcept nogil:
     cdef int num_points
     cdef pixel_type octant[8]
     cdef int i, j
-    cdef int valid_indices[5]
+    cdef int valid_indices[6]
 
     valid_indices[0] = 15
     valid_indices[1] = 51
     valid_indices[2] = 85
-    valid_indices[3] = 165
-    valid_indices[4] = 195
+    valid_indices[3] = 153
+    valid_indices[4] = 165
+    valid_indices[5] = 195
 
     with gil:
         for i in range(8):
@@ -392,7 +393,7 @@ cdef bint is_surfacepoint(pixel_type neighbors[27]) noexcept nogil:
 
             # Check if the index is one of the valid indices
             is_valid_index = False
-            for j in range(5):
+            for j in range(6):
                 if index == valid_indices[j]:
                     is_valid_index = True
                     break
