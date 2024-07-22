@@ -11,7 +11,7 @@ from ._skeletonize_3d_cy import _compute_thin_image
 from ._skeletonize_cy import _fast_skeletonize, _skeletonize_loop, _table_lookup_index
 
 
-def skeletonize(image, *, method=None):
+def skeletonize(image, *, method=None, surface=False):
     """Compute the skeleton of the input image via thinning.
 
     Parameters
@@ -26,6 +26,10 @@ def skeletonize(image, *, method=None):
         Which algorithm to use. Zhang's algorithm [Zha84]_ only works for
         2D images, and is the default for 2D. Lee's algorithm [Lee94]_
         works for 2D or 3D images and is the default for 3D.
+    surface: bool
+        When using Lee's algorithm in 3D one can decide if performing Medial Axis Thinning,
+        obtaining a skeleton, or Medial Surface Thinning, obtaining a surface skeleton.
+        Default is False.
 
     Returns
     -------
@@ -84,7 +88,7 @@ def skeletonize(image, *, method=None):
     elif image.ndim == 3 and method == 'zhang':
         raise ValueError('skeletonize method "zhang" only works for 2D ' 'images.')
     elif image.ndim == 3 or (image.ndim == 2 and method == 'lee'):
-        skeleton = _skeletonize_3d(image)
+        skeleton = _skeletonize_3d(image, surface=surface)
     else:
         raise ValueError(
             f'skeletonize requires a 2D or 3D image as input, ' f'got {image.ndim}D.'
@@ -584,7 +588,7 @@ def _table_lookup(image, table):
     return image
 
 
-def _skeletonize_3d(image):
+def _skeletonize_3d(image, surface=False):
     """Compute the skeleton of a binary image.
 
     Thinning is used to reduce each connected component in a binary image
@@ -595,6 +599,11 @@ def _skeletonize_3d(image):
     image : ndarray, 2D or 3D
         An image containing the objects to be skeletonized. Zeros or ``False``
         represent background, nonzero values or ``True`` are foreground.
+
+    surface: bool
+        When using Lee's algorithm in 3D one can decide if performing Medial Axis Thinning,
+        obtaining a skeleton, or Medial Surface Thinning, obtaining a surface skeleton.
+        Default is False.
 
     Returns
     -------
@@ -638,10 +647,11 @@ def _skeletonize_3d(image):
     # NB: careful here to not clobber the original *and* minimize copying
     if image.ndim == 2:
         image_o = image_o[np.newaxis, ...]
+        surface = False  # if the input is 3D don't compute the Medial Surface
     image_o = np.pad(image_o, pad_width=1, mode='constant')  # copies
 
     # do the computation
-    image_o = _compute_thin_image(image_o)
+    image_o = _compute_thin_image(image_o, surface)
 
     # crop it back and restore the original intensity range
     image_o = crop(image_o, crop_width=1)
@@ -651,8 +661,8 @@ def _skeletonize_3d(image):
     return image_o
 
 
-def skeletonize_3d(image):
-    return _skeletonize_3d(image)
+def skeletonize_3d(image, surface=False):
+    return _skeletonize_3d(image, surface)
 
 
 skeletonize_3d.__doc__ = _skeletonize_3d.__doc__

@@ -15,6 +15,11 @@ The original Java code [IAC15]_ carries the following message:
  *
  * @version 1.0 11/13/2015 (unique BSD licensed version for scikit-image)
  * @author Ignacio Arganda-Carreras (iargandacarreras at gmail.com)
+ *
+ * @ 22/07/2024
+ * @ Giorgio Angelotti introduced Medial Surface Thinning implementing
+ * condition (C4)(i) of [Lee94, Section 3] that was missing
+ * in the previous version.
 
 References
 ----------
@@ -45,7 +50,7 @@ cdef struct coordinate:
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def _compute_thin_image(pixel_type[:, :, ::1] img not None):
+def _compute_thin_image(pixel_type[:, :, ::1] img not None, bint surface):
     """Compute a thin image.
 
     Loop through the image multiple times, removing "simple" points, i.e.
@@ -62,6 +67,8 @@ def _compute_thin_image(pixel_type[:, :, ::1] img not None):
     ones. Furthermore, `img` is assumed to be padded by zeros from all
     directions --- this way the zero boundary conditions are automatic
     and there is need to guard against out-of-bounds access.
+
+    When `surface` is True the algorithm peforms Medial Surface Thinning.
 
     """
     cdef:
@@ -95,7 +102,7 @@ def _compute_thin_image(pixel_type[:, :, ::1] img not None):
             for j in range(num_borders):
                 curr_border = borders[j]
 
-                find_simple_point_candidates(img, curr_border, simple_border_points)
+                find_simple_point_candidates(img, surface, curr_border, simple_border_points)
 
                 # sequential re-checking to preserve connectivity when deleting
                 # in a parallel way
@@ -119,7 +126,7 @@ def _compute_thin_image(pixel_type[:, :, ::1] img not None):
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef void find_simple_point_candidates(pixel_type[:, :, ::1] img,
+cdef void find_simple_point_candidates(pixel_type[:, :, ::1] img, bint surface,
                                        int curr_border,
                                        vector[coordinate] & simple_border_points) noexcept nogil:
     """Inner loop of compute_thin_image.
@@ -178,6 +185,12 @@ cdef void find_simple_point_candidates(pixel_type[:, :, ::1] img,
                     not is_Euler_invariant(neighborhood, Euler_LUT) or
                     not is_simple_point(neighborhood)):
                     continue
+
+                # Following condition for Medial Surface Thinning
+                if surface:
+                    # check conditions (C4)(i)
+                    if is_surfacepoint(neighborhood):
+                        continue
 
                 # ok, add (p, r, c) to the list of simple border points
                 point.p = p
@@ -317,6 +330,78 @@ cdef inline bint is_endpoint(pixel_type neighbors[]) noexcept nogil:
         s += neighbors[j]
     return s == 2
 
+# Define _neighb_idx as a Python list first
+_neighb_idx_py = [
+    [2, 1, 11, 10, 5, 4, 14],    # NEB
+    [0, 9, 3, 12, 1, 10, 4],     # NWB
+    [8, 7, 17, 16, 5, 4, 14],    # SEB
+    [6, 15, 7, 16, 3, 12, 4],    # SWB
+    [20, 23, 19, 22, 11, 14, 10], # NEU
+    [18, 21, 9, 12, 19, 22, 10],  # NWU
+    [26, 23, 17, 14, 25, 22, 16], # SEU
+    [24, 25, 15, 16, 21, 22, 12]  # SWU
+]
+
+# Convert the Python list to a C array
+_neighb_idx = np.array(_neighb_idx_py, dtype=np.intc)
+
+cdef int compute_index(pixel_type octant[8]):
+    """Compute the base-10 index of the binary configuration of an octant."""
+    cdef int index = 0
+    cdef int i
+    for i in range(8):
+        index = (index << 1) | octant[i]
+    return index
+
+cdef int count_points(pixel_type neighborhood[27]) noexcept nogil:
+    """Count the number of points in a neighborhood."""
+    cdef int count = 0
+    cdef int i
+    for i in range(27):
+        count += neighborhood[i]
+    return count
+
+cdef void get_octant(pixel_type neighbors[27], int octant_index, pixel_type octant[8]):
+    """Extract the ith octant from the neighborhood."""
+    cdef int i
+    for i in range(7):
+        octant[i] = neighbors[_neighb_idx[octant_index, i]]
+    octant[7] = neighbors[13]  # Include the point itself as the 8th element
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef bint is_surfacepoint(pixel_type neighbors[27]) noexcept nogil:
+    """Check if a point is a surface point."""
+    cdef int index
+    cdef int num_points
+    cdef pixel_type octant[8]
+    cdef int i, j
+    cdef int valid_indices[5]
+
+    valid_indices[0] = 15
+    valid_indices[1] = 51
+    valid_indices[2] = 85
+    valid_indices[3] = 165
+    valid_indices[4] = 195
+
+    with gil:
+        for i in range(8):
+            get_octant(neighbors, i, octant)
+            index = compute_index(octant)
+            num_points = count_points(octant)
+
+            # Check if the index is one of the valid indices
+            is_valid_index = False
+            for j in range(5):
+                if index == valid_indices[j]:
+                    is_valid_index = True
+                    break
+
+            # Check if either condition is met
+            if not (is_valid_index or num_points < 3):
+                return False
+
+    return True
 
 cdef bint is_simple_point(pixel_type neighbors[]) noexcept nogil:
     """Check is a point is a Simple Point.
